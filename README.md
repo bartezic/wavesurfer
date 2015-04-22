@@ -4,11 +4,9 @@
 
 ## Installation
 
-
 Add this line to your application's Gemfile:
 
     gem 'wavesurfer'
-
 
 And then execute:
 
@@ -26,7 +24,9 @@ Add next lines to your application.js file:
     //= require src/mediaelement
     //= require src/drawer
     //= require src/drawer.canvas
+
     or include all files above with single line
+    
     //= require wavesurfer
 
 Also can include wavesurfer plugins:
@@ -37,22 +37,26 @@ Also can include wavesurfer plugins:
     //= require plugin/wavesurfer.regions
     //= require plugin/wavesurfer.spectrogram
     //= require plugin/wavesurfer.timeline
+
     or include all plugins above with single line
+    
     //= require wavesurfer-plugins
 
 ## Usage
 
-Given an input field, add a class of your choice to it.
+    var wavesurfer = Object.create(WaveSurfer);
 
-    <div id="magicsuggest"></div>
-
-Then tokenize the input field as follows.
-
-    $(function() {
-      $('#magicsuggest').magicSuggest({
-        [...] // configuration options
-      });
+    wavesurfer.init({
+        container: document.querySelector('#wave'),
+        waveColor: 'violet',
+        progressColor: 'purple'
     });
+
+    wavesurfer.on('ready', function () {
+        wavesurfer.play();
+    });
+
+    wavesurfer.load('example/media/demo.mp3');
 
 Check out the [demo and docs](https://github.com/katspaugh/wavesurfer.js).
 
