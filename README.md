@@ -71,7 +71,14 @@ Check out the [demo and docs](https://github.com/katspaugh/wavesurfer.js).
 ## Changelog
 
 <ul>
-  <li>Released gem v.0.0.1</li>
+    <li>22.04.15: Released gem v.0.0.1</li>
+    <ul>
+        <li>plugin version: 1.0.26</li>
+    </ul>
+    <li>29.04.15: Released gem v.0.0.2</li>
+    <ul>
+        <li>plugin version: 1.0.27</li>
+    </ul>
 </ul>
 
 ## Contributors
