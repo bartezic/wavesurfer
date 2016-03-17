@@ -64,16 +64,11 @@ var WaveSurfer = {
         // Used to save the current volume when muting so we can
         // restore once unmuted
         this.savedVolume = 0;
-
         // The current muted state
         this.isMuted = false;
-
         // Will hold a list of event descriptors that need to be
         // cancelled on subsequent loads of audio
         this.tmpEvents = [];
-
-        // Holds any running audio downloads
-        this.currentAjax = null;
 
         this.createDrawer();
         this.createBackend();
@@ -395,28 +390,19 @@ var WaveSurfer = {
 
     getArrayBuffer: function (url, callback) {
         var my = this;
-
         var ajax = WaveSurfer.util.ajax({
             url: url,
             responseType: 'arraybuffer'
         });
-
-        this.currentAjax = ajax;
-
         this.tmpEvents.push(
             ajax.on('progress', function (e) {
                 my.onProgress(e);
             }),
-            ajax.on('success', function (data, e) {
-                callback(data);
-                my.currentAjax = null;
-            }),
+            ajax.on('success', callback),
             ajax.on('error', function (e) {
                 my.fireEvent('error', 'XHR error: ' + e.target.statusText);
-                my.currentAjax = null;
             })
         );
-
         return ajax;
     },
 
@@ -450,13 +436,6 @@ var WaveSurfer = {
         return json;
     },
 
-    cancelAjax: function () {
-        if (this.currentAjax) {
-            this.currentAjax.xhr.abort();
-            this.currentAjax = null;
-        }
-    },
-
     clearTmpEvents: function () {
         this.tmpEvents.forEach(function (e) { e.un(); });
     },
@@ -469,7 +448,6 @@ var WaveSurfer = {
             this.stop();
             this.backend.disconnectSource();
         }
-        this.cancelAjax();
         this.clearTmpEvents();
         this.drawer.progress(0);
         this.drawer.setWidth(0);
@@ -481,7 +459,6 @@ var WaveSurfer = {
      */
     destroy: function () {
         this.fireEvent('destroy');
-        this.cancelAjax();
         this.clearTmpEvents();
         this.unAll();
         this.backend.destroy();
