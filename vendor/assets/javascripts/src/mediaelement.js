@@ -18,16 +18,18 @@ WaveSurfer.util.extend(WaveSurfer.MediaElement, {
 
         this.mediaType = params.mediaType.toLowerCase();
         this.elementPosition = params.elementPosition;
+        this.setPlaybackRate(this.params.audioRate);
     },
 
     load: function (url, container, peaks) {
         var my = this;
 
         var media = document.createElement(this.mediaType);
-        media.controls = false;
-        media.autoplay = false;
+        media.controls = this.params.mediaControls;
+        media.autoplay = this.params.autoplay || false;
         media.preload = 'auto';
         media.src = url;
+        media.style.width = '100%';
 
         media.addEventListener('error', function () {
             my.fireEvent('error', 'Error loading media element');
@@ -59,7 +61,7 @@ WaveSurfer.util.extend(WaveSurfer.MediaElement, {
     },
 
     isPaused: function () {
-        return this.media.paused;
+        return !this.media || this.media.paused;
     },
 
     getDuration: function () {
@@ -71,7 +73,7 @@ WaveSurfer.util.extend(WaveSurfer.MediaElement, {
     },
 
     getCurrentTime: function () {
-        return this.media.currentTime;
+        return this.media && this.media.currentTime;
     },
 
     getPlayedPercents: function () {
@@ -105,14 +107,16 @@ WaveSurfer.util.extend(WaveSurfer.MediaElement, {
         this.seekTo(start);
         this.media.play();
         end && this.setPlayEnd(end);
+        this.fireEvent('play');
     },
 
     /**
      * Pauses the loaded audio.
      */
     pause: function () {
-        this.media.pause();
+        this.media && this.media.pause();
         this.clearPlayEnd();
+        this.fireEvent('pause');
     },
 
     setPlayEnd: function (end) {
@@ -151,7 +155,7 @@ WaveSurfer.util.extend(WaveSurfer.MediaElement, {
     destroy: function () {
         this.pause();
         this.unAll();
-        this.media.parentNode && this.media.parentNode.removeChild(this.media);
+        this.media && this.media.parentNode && this.media.parentNode.removeChild(this.media);
         this.media = null;
     }
 });

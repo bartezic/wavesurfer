@@ -37,16 +37,29 @@ WaveSurfer.Regions = {
         var start;
         var region;
 
-        this.wrapper.addEventListener('mousedown', function (e) {
+        function eventDown(e) {
             drag = true;
+            if (typeof e.targetTouches !== 'undefined' && e.targetTouches.length === 1) {
+                e.clientX = e.targetTouches[0].clientX;
+            }
             start = my.wavesurfer.drawer.handleEvent(e);
             region = null;
-        });
-        this.wrapper.addEventListener('mouseup', function () {
+        }
+        this.wrapper.addEventListener('mousedown', eventDown);
+        this.wrapper.addEventListener('touchstart', eventDown);
+        function eventUp(e) {
             drag = false;
+
+            if (region) {
+                region.fireEvent('update-end', e);
+                my.wavesurfer.fireEvent('region-update-end', region, e);
+            }
+
             region = null;
-        });
-        this.wrapper.addEventListener('mousemove', function (e) {
+        }
+        this.wrapper.addEventListener('mouseup', eventUp);
+        this.wrapper.addEventListener('touchend', eventUp);
+        function eventMove(e) {
             if (!drag) { return; }
 
             if (!region) {
@@ -54,12 +67,17 @@ WaveSurfer.Regions = {
             }
 
             var duration = my.wavesurfer.getDuration();
+            if (typeof e.targetTouches !== 'undefined' && e.targetTouches.length === 1) {
+                e.clientX = e.targetTouches[0].clientX;
+            }
             var end = my.wavesurfer.drawer.handleEvent(e);
             region.update({
                 start: Math.min(end * duration, start * duration),
                 end: Math.max(end * duration, start * duration)
             });
-        });
+        }
+        this.wrapper.addEventListener('mousemove', eventMove);
+        this.wrapper.addEventListener('touchmove', eventMove);
     }
 };
 
@@ -82,11 +100,16 @@ WaveSurfer.Region = {
         this.loop = Boolean(params.loop);
         this.color = params.color || 'rgba(0, 0, 0, 0.1)';
         this.data = params.data || {};
+        this.attributes = params.attributes || {};
+
+        this.maxLength = params.maxLength;
+        this.minLength = params.minLength;
 
         this.bindInOut();
         this.render();
-
+        this.wavesurfer.on('zoom', this.updateRender.bind(this));
         this.wavesurfer.fireEvent('region-created', this);
+
     },
 
     /* Update region params. */
@@ -112,6 +135,16 @@ WaveSurfer.Region = {
         if (null != params.drag) {
             this.drag = Boolean(params.drag);
         }
+        if (null != params.maxLength) {
+            this.maxLength = Number(params.maxLength);
+        }
+        if (null != params.minLength) {
+            this.minLength = Number(params.minLength);
+        }
+        if (null != params.attributes) {
+            this.attributes = params.attributes;
+        }
+
         this.updateRender();
         this.fireEvent('update');
         this.wavesurfer.fireEvent('region-updated', this);
@@ -123,6 +156,7 @@ WaveSurfer.Region = {
             this.wrapper.removeChild(this.element);
             this.element = null;
             this.fireEvent('remove');
+            this.wavesurfer.un('zoom', this.updateRender.bind(this));
             this.wavesurfer.fireEvent('region-removed', this);
         }
     },
@@ -145,6 +179,11 @@ WaveSurfer.Region = {
         var regionEl = document.createElement('region');
         regionEl.className = 'wavesurfer-region';
         regionEl.title = this.formatTime(this.start, this.end);
+        regionEl.setAttribute('data-id', this.id);
+
+        for (var attrname in this.attributes) {
+            regionEl.setAttribute('data-region-' + attrname, this.attributes[attrname]);
+        }
 
         var width = this.wrapper.scrollWidth;
         this.style(regionEl, {
@@ -187,13 +226,19 @@ WaveSurfer.Region = {
                 Math.floor((time % 3600) / 60), // minutes
                 ('00' + Math.floor(time % 60)).slice(-2) // seconds
             ].join(':');
-        }).join('–');
+        }).join('-');
     },
 
     /* Update element's position, width, color. */
-    updateRender: function () {
+    updateRender: function (pxPerSec) {
         var dur = this.wavesurfer.getDuration();
-        var width = this.wrapper.scrollWidth;
+        var width;
+        if (pxPerSec) {
+            width = Math.round(this.wavesurfer.getDuration() * pxPerSec);
+        }
+        else {
+            width = this.wrapper.scrollWidth;
+        }
 
         if (this.start < 0) {
           this.start = 0;
@@ -203,42 +248,56 @@ WaveSurfer.Region = {
           this.end = dur;
           this.start = dur - (this.end - this.start);
         }
-        this.style(this.element, {
-            left: ~~(this.start / dur * width) + 'px',
-            width: ~~((this.end - this.start) / dur * width) + 'px',
-            backgroundColor: this.color,
-            cursor: this.drag ? 'move' : 'default'
-        });
-        this.element.title = this.formatTime(this.start, this.end);
+
+        if (this.minLength != null) {
+            this.end = Math.max(this.start + this.minLength, this.end);
+        }
+
+        if (this.maxLength != null) {
+            this.end = Math.min(this.start + this.maxLength, this.end);
+        }
+
+        if (this.element != null) {
+            this.style(this.element, {
+                left: ~~(this.start / dur * width) + 'px',
+                width: ~~((this.end - this.start) / dur * width) + 'px',
+                backgroundColor: this.color,
+                cursor: this.drag ? 'move' : 'default'
+            });
+
+            for (var attrname in this.attributes) {
+                this.element.setAttribute('data-region-' + attrname, this.attributes[attrname]);
+            }
+
+            this.element.title = this.formatTime(this.start, this.end);
+        }
     },
 
     /* Bind audio events. */
     bindInOut: function () {
         var my = this;
 
-        var onPlay = function () {
-            my.firedIn = false;
-            my.firedOut = false;
-        };
+        my.firedIn = false;
+        my.firedOut = false;
 
         var onProcess = function (time) {
             if (!my.firedIn && my.start <= time && my.end > time) {
                 my.firedIn = true;
+                my.firedOut = false;
                 my.fireEvent('in');
                 my.wavesurfer.fireEvent('region-in', my);
             }
-            if (!my.firedOut && my.firedIn && my.end <= time) {
+            if (!my.firedOut && my.firedIn && (my.start >= Math.round(time * 100) / 100 || my.end <= Math.round(time * 100) / 100)) {
                 my.firedOut = true;
+                my.firedIn = false;
                 my.fireEvent('out');
                 my.wavesurfer.fireEvent('region-out', my);
             }
         };
 
-        this.wavesurfer.on('play', onPlay);
         this.wavesurfer.backend.on('audioprocess', onProcess);
 
         this.on('remove', function () {
-            my.wavesurfer.un('play', onPlay);
             my.wavesurfer.backend.un('audioprocess', onProcess);
         });
 
@@ -305,8 +364,8 @@ WaveSurfer.Region = {
                     e.stopPropagation();
                     e.preventDefault();
 
-                    my.fireEvent('update-end');
-                    my.wavesurfer.fireEvent('region-update-end');
+                    my.fireEvent('update-end', e);
+                    my.wavesurfer.fireEvent('region-update-end', my, e);
                 }
             };
             var onMove = function (e) {

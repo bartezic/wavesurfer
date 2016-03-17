@@ -71,7 +71,10 @@ WaveSurfer.Drawer = {
     drawPeaks: function (peaks, length) {
         this.resetScroll();
         this.setWidth(length);
-        this.drawWave(peaks);
+
+        this.params.barWidth ?
+            this.drawBars(peaks) :
+            this.drawWave(peaks);
     },
 
     style: function (el, styles) {
@@ -161,7 +164,7 @@ WaveSurfer.Drawer = {
         if (pos < this.lastPos || pos - this.lastPos >= minPxDelta) {
             this.lastPos = pos;
 
-            if (this.params.scrollParent) {
+            if (this.params.scrollParent && this.params.autoCenter) {
                 var newPos = ~~(this.wrapper.scrollWidth * progress);
                 this.recenterOnPosition(newPos);
             }
