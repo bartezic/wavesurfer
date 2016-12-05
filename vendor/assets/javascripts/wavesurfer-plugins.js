@@ -4,3 +4,4 @@
 //= require plugin/wavesurfer.regions
 //= require plugin/wavesurfer.spectrogram
 //= require plugin/wavesurfer.timeline
+//= require plugin/wavesurfer.cursor

@@ -10,6 +10,7 @@ WaveSurfer.Drawer = {
 
         this.lastPos = 0;
 
+        this.initDrawer(params);
         this.createWrapper();
         this.createElements();
     },
@@ -38,10 +39,28 @@ WaveSurfer.Drawer = {
         this.setupWrapperEvents();
     },
 
-    handleEvent: function (e) {
-        e.preventDefault();
+    handleEvent: function (e, noPrevent) {
+        !noPrevent && e.preventDefault();
+
+        var clientX = e.targetTouches ? e.targetTouches[0].clientX : e.clientX;
         var bbox = this.wrapper.getBoundingClientRect();
-        return ((e.clientX - bbox.left + this.wrapper.scrollLeft) / this.wrapper.scrollWidth) || 0;
+
+        var nominalWidth = this.width;
+        var parentWidth = this.getWidth();
+
+        var progress;
+
+        if (!this.params.fillParent && nominalWidth < parentWidth) {
+            progress = ((clientX - bbox.left) * this.params.pixelRatio / nominalWidth) || 0;
+
+            if (progress > 1) {
+                progress = 1;
+            }
+        } else {
+            progress = ((clientX - bbox.left + this.wrapper.scrollLeft) / this.wrapper.scrollWidth) || 0;
+        }
+
+        return progress;
     },
 
     setupWrapperEvents: function () {
@@ -131,8 +150,6 @@ WaveSurfer.Drawer = {
     },
 
     setWidth: function (width) {
-        if (width == this.width) { return; }
-
         this.width = width;
 
         if (this.params.fillParent || this.params.scrollParent) {
@@ -182,6 +199,8 @@ WaveSurfer.Drawer = {
     },
 
     /* Renderer-specific methods */
+    initDrawer: function () {},
+
     createElements: function () {},
 
     updateSize: function () {},

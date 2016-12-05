@@ -6,19 +6,22 @@ WaveSurfer.Timeline = {
         var wavesurfer = this.wavesurfer = params.wavesurfer;
 
         if (!this.wavesurfer) {
-            throw Error('No WaveSurfer intance provided');
+            throw Error('No WaveSurfer instance provided');
         }
 
         var drawer = this.drawer = this.wavesurfer.drawer;
 
         this.container = 'string' == typeof params.container ?
-        document.querySelector(params.container) : params.container;
+            document.querySelector(params.container) : params.container;
 
         if (!this.container) {
             throw Error('No container for WaveSurfer timeline');
         }
 
         this.width = drawer.width;
+        this.pixelRatio = this.drawer.params.pixelRatio;
+        this.maxCanvasWidth = drawer.maxCanvasWidth || this.width;
+        this.maxCanvasElementWidth = drawer.maxCanvasElementWidth || Math.round(this.maxCanvasWidth / this.pixelRatio);
         this.height = this.params.height || 20;
         this.notchPercentHeight = this.params.notchPercentHeight || 90;
         this.primaryColor = this.params.primaryColor || '#000';
@@ -31,18 +34,29 @@ WaveSurfer.Timeline = {
         this.primaryLabelInterval = this.params.primaryLabelInterval;
         this.secondaryLabelInterval = this.params.secondaryLabelInterval;
         this.formatTimeCallback = this.params.formatTimeCallback;
+        this.canvases = [];
 
         this.createWrapper();
-        this.createCanvas();
         this.render();
 
-        wavesurfer.drawer.wrapper.onscroll = this.updateScroll.bind(this);
-        wavesurfer.on('redraw', this.render.bind(this));
-        wavesurfer.on('destroy', this.destroy.bind(this));
+        drawer.wrapper.addEventListener('scroll', function (e) {
+            this.updateScroll(e);
+        }.bind(this));
+
+        this._onRedraw = wavesurfer.on('redraw', this.render.bind(this));
+        this._onZoom = wavesurfer.on('zoom', this.render.bind(this));
+        this._onDestroy = wavesurfer.on('destroy', this.destroy.bind(this));
     },
 
     destroy: function () {
+        // Unsubscribe from internal wavesurfer events
+        this._onRedraw.un();
+        this._onZoom.un();
+        this._onDestroy.un();
+
+        // Unsubscribe from external timeline events
         this.unAll();
+
         if (this.wrapper && this.wrapper.parentNode) {
             this.wrapper.parentNode.removeChild(this.wrapper);
             this.wrapper = null;
@@ -83,37 +97,59 @@ WaveSurfer.Timeline = {
         });
     },
 
-    createCanvas: function () {
-        var canvas = this.canvas = this.wrapper.appendChild(
-            document.createElement('canvas')
-        );
+    removeOldCanvases: function () {
+        while (this.canvases.length > 0) {
+            var canvas = this.canvases.pop();
+            canvas.parentElement.removeChild(canvas);
+        }
+    },
 
-        this.timeCc = canvas.getContext('2d');
+    createCanvases: function () {
+        this.removeOldCanvases();
 
-        this.wavesurfer.drawer.style(canvas, {
-            position: 'absolute',
-            zIndex: 4
-        });
+        var totalWidth = Math.round(this.drawer.wrapper.scrollWidth),
+            requiredCanvases = Math.ceil(totalWidth / this.maxCanvasElementWidth),
+            canvas;
+
+        for (var i = 0; i < requiredCanvases; i++) {
+            canvas = this.wrapper.appendChild(document.createElement('canvas'));
+            this.canvases.push(canvas);
+            this.drawer.style(canvas, {
+                position: 'absolute',
+                zIndex: 4
+            });
+        }
     },
 
     render: function () {
+        this.createCanvases();
         this.updateCanvasStyle();
-        this.drawTimeCanvas();
+        this.drawTimeCanvases();
     },
 
     updateCanvasStyle: function () {
-        var width = this.drawer.wrapper.scrollWidth;
-        this.canvas.width = width * this.wavesurfer.params.pixelRatio;
-        this.canvas.height = this.height * this.wavesurfer.params.pixelRatio;
-        this.canvas.style.width = width + 'px';
-        this.canvas.style.height = this.height + 'px';
+        var requiredCanvases = this.canvases.length;
+        for (var i = 0; i < requiredCanvases; i++) {
+            var canvas = this.canvases[i],
+                canvasWidth = this.maxCanvasElementWidth;
+
+            if (i === requiredCanvases - 1) {
+                canvasWidth = this.drawer.wrapper.scrollWidth - (this.maxCanvasElementWidth * (requiredCanvases - 1));
+            }
+
+            canvas.width = canvasWidth * this.pixelRatio;
+            canvas.height = this.height * this.pixelRatio;
+            canvas.style.width = canvasWidth + 'px';
+            canvas.style.height = this.height + 'px';
+            canvas.style.left = i * this.maxCanvasElementWidth + 'px';
+        }
     },
 
-    drawTimeCanvas: function() {
+    drawTimeCanvases: function() {
         var backend = this.wavesurfer.backend,
-        wsParams = this.wavesurfer.params,
-        duration = backend.getDuration(),
-        self = this;
+            wsParams = this.wavesurfer.params,
+            duration = backend.getDuration(),
+            self = this;
 
         if (wsParams.fillParent && !wsParams.scrollParent) {
             var width = this.drawer.getWidth();
@@ -122,24 +158,25 @@ WaveSurfer.Timeline = {
         }
         var pixelsPerSecond = width/duration;
 
-        if (duration > 0) {
+        if (duration <= 0) { return; }
+
         var curPixel = 0,
             curSeconds = 0,
             totalSeconds = parseInt(duration, 10) + 1,
             formatTime = function(seconds) {
-            if (typeof self.formatTimeCallback === 'function') {
-                return self.formatTimeCallback(seconds);
-            }
+                if (typeof self.formatTimeCallback === 'function') {
+                    return self.formatTimeCallback(seconds);
+                }
 
-            if (seconds/60 > 1) {
-                var minutes = parseInt(seconds / 60),
-                seconds = parseInt(seconds % 60);
-                seconds = (seconds < 10) ? '0' + seconds : seconds;
-                return '' + minutes + ':' + seconds;
-            } else {
-                return seconds;
-            }
-        };
+                if (seconds/60 > 1) {
+                    var minutes = parseInt(seconds / 60),
+                        seconds = parseInt(seconds % 60);
+                    seconds = (seconds < 10) ? '0' + seconds : seconds;
+                    return '' + minutes + ':' + seconds;
+                } else {
+                    return seconds;
+                }
+            };
 
         if (pixelsPerSecond * 1 >= 25) {
             var timeInterval = 1;
@@ -169,25 +206,79 @@ WaveSurfer.Timeline = {
 
         for (var i = 0; i < totalSeconds/timeInterval; i++) {
             if (i % primaryLabelInterval == 0) {
-                this.timeCc.fillStyle = this.primaryColor;
-                this.timeCc.fillRect(curPixel, 0, 1, height1);
-                this.timeCc.font = fontSize + 'px ' + this.fontFamily;
-                this.timeCc.fillStyle = this.primaryFontColor;
-                this.timeCc.fillText(formatTime(curSeconds), curPixel + 5, height1);
+                this.setFillStyles(this.primaryColor);
+                this.fillRect(curPixel, 0, 1, height1);
+                this.setFonts(fontSize + 'px ' + this.fontFamily);
+                this.setFillStyles(this.primaryFontColor);
+                this.fillText(formatTime(curSeconds), curPixel + 5, height1);
             } else if (i % secondaryLabelInterval == 0) {
-                this.timeCc.fillStyle = this.secondaryColor;
-                this.timeCc.fillRect(curPixel, 0, 1, height1);
-                this.timeCc.font = fontSize + 'px ' + this.fontFamily;
-                this.timeCc.fillStyle = this.secondaryFontColor;
-                this.timeCc.fillText(formatTime(curSeconds), curPixel + 5, height1);
+                this.setFillStyles(this.secondaryColor);
+                this.fillRect(curPixel, 0, 1, height1);
+                this.setFonts(fontSize + 'px ' + this.fontFamily);
+                this.setFillStyles(this.secondaryFontColor);
+                this.fillText(formatTime(curSeconds), curPixel + 5, height1);
             } else {
-                this.timeCc.fillStyle = this.secondaryColor;
-                this.timeCc.fillRect(curPixel, 0, 1, height2);
+                this.setFillStyles(this.secondaryColor);
+                this.fillRect(curPixel, 0, 1, height2);
             }
 
             curSeconds += timeInterval;
             curPixel += pixelsPerSecond * timeInterval;
         }
+    },
+
+    setFillStyles: function (fillStyle) {
+        for (var i in this.canvases) {
+            this.canvases[i].getContext('2d').fillStyle = fillStyle;
+        }
+    },
+
+    setFonts: function (font) {
+        for (var i in this.canvases) {
+            this.canvases[i].getContext('2d').font = font;
+        }
+    },
+
+    fillRect: function (x, y, width, height) {
+        for (var i in this.canvases) {
+            var canvas = this.canvases[i],
+                leftOffset = i * this.maxCanvasWidth;
+
+            var intersection = {
+                x1: Math.max(x, i * this.maxCanvasWidth),
+                y1: y,
+                x2: Math.min(x + width, i * this.maxCanvasWidth + canvas.width),
+                y2: y + height
+            };
+
+            if (intersection.x1 < intersection.x2) {
+                canvas.getContext('2d').fillRect(
+                    intersection.x1 - leftOffset,
+                    intersection.y1,
+                    intersection.x2 - intersection.x1,
+                    intersection.y2 - intersection.y1);
+            }
+        }
+    },
+
+    fillText: function (text, x, y) {
+        var textWidth,
+            xOffset = 0;
+
+        for (var i in this.canvases) {
+            var context = this.canvases[i].getContext('2d'),
+                canvasWidth = context.canvas.width;
+
+            if (xOffset > x + textWidth) {
+                break;
+            }
+
+            if (xOffset + canvasWidth > x) {
+                textWidth = context.measureText(text).width;
+                context.fillText(text, x - xOffset, y);
+            }
+
+            xOffset += canvasWidth;
         }
     },
 

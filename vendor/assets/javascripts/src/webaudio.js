@@ -11,12 +11,12 @@ WaveSurfer.WebAudio = {
     },
 
     getAudioContext: function () {
-        if (!WaveSurfer.WebAudio.audioContext) {
-            WaveSurfer.WebAudio.audioContext = new (
+        if (!this.ac) {
+            this.ac = new (
                 window.AudioContext || window.webkitAudioContext
             );
         }
-        return WaveSurfer.WebAudio.audioContext;
+        return this.ac;
     },
 
     getOfflineAudioContext: function (sampleRate) {
@@ -116,8 +116,7 @@ WaveSurfer.WebAudio = {
                 my.setState(my.FINISHED_STATE);
                 my.fireEvent('pause');
             } else if (time >= my.scheduledPause) {
-                my.setState(my.PAUSED_STATE);
-                my.fireEvent('pause');
+                my.pause();
             } else if (my.state === my.states[my.PLAYING_STATE]) {
                 my.fireEvent('audioprocess', time);
             }
@@ -177,6 +176,13 @@ WaveSurfer.WebAudio = {
     },
 
     /**
+     * Set pre-decoded peaks.
+     */
+    setPeaks: function (peaks) {
+        this.peaks = peaks;
+    },
+
+    /**
      * Compute the max and min value of the waveform when broken into
      * <length> subranges.
      * @param {Number} How many subranges to break the waveform into.
@@ -184,6 +190,8 @@ WaveSurfer.WebAudio = {
      * of peaks consisting of (max, min) values for each subrange.
      */
     getPeaks: function (length) {
+        if (this.peaks) { return this.peaks; }
+
         var sampleSize = this.buffer.length / length;
         var sampleStep = ~~(sampleSize / 10) || 1;
         var channels = this.buffer.numberOfChannels;
@@ -197,8 +205,8 @@ WaveSurfer.WebAudio = {
             for (var i = 0; i < length; i++) {
                 var start = ~~(i * sampleSize);
                 var end = ~~(start + sampleSize);
-                var min = chan[0];
-                var max = chan[0];
+                var min = 0;
+                var max = 0;
 
                 for (var j = start; j < end; j += sampleStep) {
                     var value = chan[j];
@@ -249,6 +257,11 @@ WaveSurfer.WebAudio = {
         this.gainNode.disconnect();
         this.scriptNode.disconnect();
         this.analyser.disconnect();
+        // close the audioContext if it was created by wavesurfer
+        // not passed in as a parameter
+        if (!this.params.audioContext) {
+            this.ac.close();
+        }
     },
 
     load: function (buffer) {
@@ -283,6 +296,8 @@ WaveSurfer.WebAudio = {
     },
 
     seekTo: function (start, end) {
+        if (!this.buffer) { return; }
+
         this.scheduledPause = null;
 
         if (start == null) {
@@ -318,6 +333,8 @@ WaveSurfer.WebAudio = {
      * relative to the beginning of a clip.
      */
     play: function (start, end) {
+        if (!this.buffer) { return; }
+
         // need to re-create source on each playback
         this.createSource();
 
@@ -329,6 +346,10 @@ WaveSurfer.WebAudio = {
         this.scheduledPause = end;
 
         this.source.start(0, start, end - start);
+
+        if (this.ac.state == 'suspended') {
+          this.ac.resume && this.ac.resume();
+        }
 
         this.setState(this.PLAYING_STATE);
 
