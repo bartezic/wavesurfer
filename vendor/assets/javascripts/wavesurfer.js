@@ -4,3 +4,5 @@
 //= require src/mediaelement
 //= require src/drawer
 //= require src/drawer.canvas
+//= require src/drawer.multicanvas
+//= require src/html-init

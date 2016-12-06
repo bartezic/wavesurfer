@@ -10,7 +10,7 @@ WaveSurfer.Regions = {
         this.list = {};
     },
 
-    /* Remove a region. */
+    /* Add a region. */
     add: function (params) {
         var region = Object.create(WaveSurfer.Region);
         region.init(params, this.wavesurfer);
@@ -36,18 +36,57 @@ WaveSurfer.Regions = {
         var drag;
         var start;
         var region;
+        var touchId;
+        var slop = params.slop || 2;
+        var pxMove = 0;
 
-        this.wrapper.addEventListener('mousedown', function (e) {
+        var eventDown = function (e) {
+            if (e.touches && e.touches.length > 1) { return; }
+
+            // Check whether the click/tap is on the bottom-most DOM element
+            // Effectively prevent clicks on the scrollbar from registering as
+            // region creation.
+            if (e.target.childElementCount > 0) { return; }
+
+            touchId = e.targetTouches ? e.targetTouches[0].identifier : null;
+
             drag = true;
-            start = my.wavesurfer.drawer.handleEvent(e);
+            start = my.wavesurfer.drawer.handleEvent(e, true);
             region = null;
+        };
+        this.wrapper.addEventListener('mousedown', eventDown);
+        this.wrapper.addEventListener('touchstart', eventDown);
+        this.on('disable-drag-selection', function() {
+            my.wrapper.removeEventListener('touchstart', eventDown);
+            my.wrapper.removeEventListener('mousedown', eventDown);
         });
-        this.wrapper.addEventListener('mouseup', function () {
+
+        var eventUp = function (e) {
+            if (e.touches && e.touches.length > 1) { return; }
+
             drag = false;
+            pxMove = 0;
+
+            if (region) {
+                region.fireEvent('update-end', e);
+                my.wavesurfer.fireEvent('region-update-end', region, e);
+            }
+
             region = null;
+        };
+        this.wrapper.addEventListener('mouseup', eventUp);
+        this.wrapper.addEventListener('touchend', eventUp);
+        this.on('disable-drag-selection', function() {
+            my.wrapper.removeEventListener('touchend', eventUp);
+            my.wrapper.removeEventListener('mouseup', eventUp);
         });
-        this.wrapper.addEventListener('mousemove', function (e) {
+
+        var eventMove = function (e) {
             if (!drag) { return; }
+            if (++pxMove <= slop) { return; }
+
+            if (e.touches && e.touches.length > 1) { return; }
+            if (e.targetTouches && e.targetTouches[0].identifier != touchId) { return; }
 
             if (!region) {
                 region = my.add(params || {});
@@ -59,9 +98,21 @@ WaveSurfer.Regions = {
                 start: Math.min(end * duration, start * duration),
                 end: Math.max(end * duration, start * duration)
             });
+        };
+        this.wrapper.addEventListener('mousemove', eventMove);
+        this.wrapper.addEventListener('touchmove', eventMove);
+        this.on('disable-drag-selection', function() {
+            my.wrapper.removeEventListener('touchmove', eventMove);
+            my.wrapper.removeEventListener('mousemove', eventMove);
         });
+    },
+
+    disableDragSelection: function () {
+        this.fireEvent('disable-drag-selection');
     }
 };
+
+WaveSurfer.util.extend(WaveSurfer.Regions, WaveSurfer.Observer);
 
 WaveSurfer.Region = {
     /* Helper function to assign CSS styles. */
@@ -82,11 +133,19 @@ WaveSurfer.Region = {
         this.loop = Boolean(params.loop);
         this.color = params.color || 'rgba(0, 0, 0, 0.1)';
         this.data = params.data || {};
+        this.attributes = params.attributes || {};
+
+        this.maxLength = params.maxLength;
+        this.minLength = params.minLength;
 
         this.bindInOut();
         this.render();
 
+        this.onZoom = this.updateRender.bind(this);
+        this.wavesurfer.on('zoom', this.onZoom);
+
         this.wavesurfer.fireEvent('region-created', this);
+
     },
 
     /* Update region params. */
@@ -112,16 +171,27 @@ WaveSurfer.Region = {
         if (null != params.drag) {
             this.drag = Boolean(params.drag);
         }
+        if (null != params.maxLength) {
+            this.maxLength = Number(params.maxLength);
+        }
+        if (null != params.minLength) {
+            this.minLength = Number(params.minLength);
+        }
+        if (null != params.attributes) {
+            this.attributes = params.attributes;
+        }
+
         this.updateRender();
         this.fireEvent('update');
         this.wavesurfer.fireEvent('region-updated', this);
     },
 
     /* Remove a single region. */
-    remove: function (region) {
+    remove: function () {
         if (this.element) {
             this.wrapper.removeChild(this.element);
             this.element = null;
+            this.wavesurfer.un('zoom', this.onZoom);
             this.fireEvent('remove');
             this.wavesurfer.fireEvent('region-removed', this);
         }
@@ -145,6 +215,11 @@ WaveSurfer.Region = {
         var regionEl = document.createElement('region');
         regionEl.className = 'wavesurfer-region';
         regionEl.title = this.formatTime(this.start, this.end);
+        regionEl.setAttribute('data-id', this.id);
+
+        for (var attrname in this.attributes) {
+            regionEl.setAttribute('data-region-' + attrname, this.attributes[attrname]);
+        }
 
         var width = this.wrapper.scrollWidth;
         this.style(regionEl, {
@@ -187,13 +262,17 @@ WaveSurfer.Region = {
                 Math.floor((time % 3600) / 60), // minutes
                 ('00' + Math.floor(time % 60)).slice(-2) // seconds
             ].join(':');
-        }).join('–');
+        }).join('-');
+    },
+
+    getWidth: function () {
+        return this.wavesurfer.drawer.width / this.wavesurfer.params.pixelRatio;
     },
 
     /* Update element's position, width, color. */
     updateRender: function () {
         var dur = this.wavesurfer.getDuration();
-        var width = this.wrapper.scrollWidth;
+        var width = this.getWidth();
 
         if (this.start < 0) {
           this.start = 0;
@@ -203,42 +282,62 @@ WaveSurfer.Region = {
           this.end = dur;
           this.start = dur - (this.end - this.start);
         }
-        this.style(this.element, {
-            left: ~~(this.start / dur * width) + 'px',
-            width: ~~((this.end - this.start) / dur * width) + 'px',
-            backgroundColor: this.color,
-            cursor: this.drag ? 'move' : 'default'
-        });
-        this.element.title = this.formatTime(this.start, this.end);
+
+        if (this.minLength != null) {
+            this.end = Math.max(this.start + this.minLength, this.end);
+        }
+
+        if (this.maxLength != null) {
+            this.end = Math.min(this.start + this.maxLength, this.end);
+        }
+
+        if (this.element != null) {
+            // Calculate the left and width values of the region such that
+            // no gaps appear between regions.
+            var left = Math.round(this.start / dur * width);
+            var regionWidth =
+                Math.round(this.end / dur * width) - left;
+
+            this.style(this.element, {
+                left: left + 'px',
+                width: regionWidth + 'px',
+                backgroundColor: this.color,
+                cursor: this.drag ? 'move' : 'default'
+            });
+
+            for (var attrname in this.attributes) {
+                this.element.setAttribute('data-region-' + attrname, this.attributes[attrname]);
+            }
+
+            this.element.title = this.formatTime(this.start, this.end);
+        }
     },
 
     /* Bind audio events. */
     bindInOut: function () {
         var my = this;
 
-        var onPlay = function () {
-            my.firedIn = false;
-            my.firedOut = false;
-        };
+        my.firedIn = false;
+        my.firedOut = false;
 
         var onProcess = function (time) {
-            if (!my.firedIn && my.start <= time && my.end > time) {
-                my.firedIn = true;
-                my.fireEvent('in');
-                my.wavesurfer.fireEvent('region-in', my);
-            }
-            if (!my.firedOut && my.firedIn && my.end <= time) {
+            if (!my.firedOut && my.firedIn && (my.start >= Math.round(time * 100) / 100 || my.end <= Math.round(time * 100) / 100)) {
                 my.firedOut = true;
+                my.firedIn = false;
                 my.fireEvent('out');
                 my.wavesurfer.fireEvent('region-out', my);
             }
+            if (!my.firedIn && my.start <= time && my.end > time) {
+                my.firedIn = true;
+                my.firedOut = false;
+                my.fireEvent('in');
+                my.wavesurfer.fireEvent('region-in', my);
+            }
         };
 
-        this.wavesurfer.on('play', onPlay);
         this.wavesurfer.backend.on('audioprocess', onProcess);
 
         this.on('remove', function () {
-            my.wavesurfer.un('play', onPlay);
             my.wavesurfer.backend.un('audioprocess', onProcess);
         });
 
@@ -283,10 +382,14 @@ WaveSurfer.Region = {
             var drag;
             var resize;
             var startTime;
+            var touchId;
 
             var onDown = function (e) {
+                if (e.touches && e.touches.length > 1) { return; }
+                touchId = e.targetTouches ? e.targetTouches[0].identifier : null;
+
                 e.stopPropagation();
-                startTime = my.wavesurfer.drawer.handleEvent(e) * duration;
+                startTime = my.wavesurfer.drawer.handleEvent(e, true) * duration;
 
                 if (e.target.tagName.toLowerCase() == 'handle') {
                     if (e.target.classList.contains('wavesurfer-handle-start')) {
@@ -296,20 +399,24 @@ WaveSurfer.Region = {
                     }
                 } else {
                     drag = true;
+                    resize = false;
                 }
             };
             var onUp = function (e) {
+                if (e.touches && e.touches.length > 1) { return; }
+
                 if (drag || resize) {
                     drag = false;
                     resize = false;
-                    e.stopPropagation();
-                    e.preventDefault();
 
-                    my.fireEvent('update-end');
-                    my.wavesurfer.fireEvent('region-update-end');
+                    my.fireEvent('update-end', e);
+                    my.wavesurfer.fireEvent('region-update-end', my, e);
                 }
             };
             var onMove = function (e) {
+                if (e.touches && e.touches.length > 1) { return; }
+                if (e.targetTouches && e.targetTouches[0].identifier != touchId) { return; }
+
                 if (drag || resize) {
                     var time = my.wavesurfer.drawer.handleEvent(e) * duration;
                     var delta = time - startTime;
@@ -328,21 +435,34 @@ WaveSurfer.Region = {
             };
 
             my.element.addEventListener('mousedown', onDown);
+            my.element.addEventListener('touchstart', onDown);
+
             my.wrapper.addEventListener('mousemove', onMove);
+            my.wrapper.addEventListener('touchmove', onMove);
+
             document.body.addEventListener('mouseup', onUp);
+            document.body.addEventListener('touchend', onUp);
 
             my.on('remove', function () {
                 document.body.removeEventListener('mouseup', onUp);
+                document.body.removeEventListener('touchend', onUp);
                 my.wrapper.removeEventListener('mousemove', onMove);
+                my.wrapper.removeEventListener('touchmove', onMove);
             });
 
             my.wavesurfer.on('destroy', function () {
                 document.body.removeEventListener('mouseup', onUp);
+                document.body.removeEventListener('touchend', onUp);
             });
         }());
     },
 
     onDrag: function (delta) {
+        var maxEnd = this.wavesurfer.getDuration();
+        if ((this.end + delta) > maxEnd || (this.start + delta) < 0) {
+            return;
+        }
+
         this.update({
             start: this.start + delta,
             end: this.end + delta
@@ -387,4 +507,8 @@ WaveSurfer.clearRegions = function () {
 WaveSurfer.enableDragSelection = function (options) {
     this.initRegions();
     this.regions.enableDragSelection(options);
+};
+
+WaveSurfer.disableDragSelection = function () {
+    this.regions.disableDragSelection();
 };
